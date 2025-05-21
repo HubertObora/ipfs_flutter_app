@@ -21,6 +21,8 @@ class _UploadScreenState extends State<UploadScreen> {
   String _statusMessage = '';
   bool _isUploading = false;
   String _ipfsHash = '';
+  String _selectedService = 'Pinata';
+  final List<String> _serviceOptions = ['Pinata', 'Filebase'];
 
   Future<void> _pickFile() async {
     setState(() {
@@ -57,46 +59,87 @@ class _UploadScreenState extends State<UploadScreen> {
 
     final stopwatch = Stopwatch()..start();
     String uploadStatus = 'Failure';
+    String? ipfsHash;
+    String? errorMessage;
 
     try {
-      final pinataKeys = await _settingsService.loadPinataKeys();
-      final apiKey = pinataKeys['apiKey'];
-      final apiSecret = pinataKeys['apiSecret'];
+      if (_selectedService == 'Pinata') {
+        final pinataKeys = await _settingsService.loadPinataKeys();
+        final apiKey = pinataKeys['apiKey'];
+        final apiSecret = pinataKeys['apiSecret'];
 
-      if (apiKey == null || apiKey.isEmpty || apiSecret == null || apiSecret.isEmpty) {
-        setState(() {
-          _statusMessage = 'Pinata API Key or Secret is not set in Settings.';
-          _isUploading = false;
-        });
-        return;
+        if (apiKey == null ||
+            apiKey.isEmpty ||
+            apiSecret == null ||
+            apiSecret.isEmpty) {
+          setState(() {
+            _statusMessage = 'Pinata API Key or Secret is not set in Settings.';
+            _isUploading = false;
+          });
+          return;
+        }
+
+        ipfsHash = await _ipfsService.uploadToPinata(
+            _selectedFile!, apiKey, apiSecret);
+      } else if (_selectedService == 'Filebase') {
+        final filebaseKeys = await _settingsService.loadFilebaseKeys();
+        final ipfsToken = filebaseKeys['apiKey'];
+        final ipfsEndpoint = filebaseKeys['ipfsEndpoint'];
+
+        if (ipfsToken == null || ipfsToken.isEmpty) {
+          setState(() {
+            _statusMessage =
+                'Filebase IPFS RPC API Token is not set in Settings.';
+            _isUploading = false;
+          });
+          return;
+        }
+
+        if (ipfsEndpoint == null || ipfsEndpoint.isEmpty) {
+          setState(() {
+            _statusMessage = 'Filebase IPFS Endpoint is not set in Settings.';
+            _isUploading = false;
+          });
+          return;
+        }
+
+        ipfsHash = await _ipfsService.uploadToFilebaseIPFS(
+            _selectedFile!, ipfsToken, "", ipfsEndpoint);
       }
 
-      final ipfsHash = await _ipfsService.uploadToPinata(_selectedFile!, apiKey, apiSecret);
       stopwatch.stop();
 
       if (ipfsHash != null) {
         setState(() {
           _statusMessage = 'File uploaded successfully!';
-          _ipfsHash = ipfsHash;
+          _ipfsHash = ipfsHash ?? '';
           uploadStatus = 'Success';
         });
       } else {
         setState(() {
           _statusMessage = 'Upload failed. Check console for details.';
+          errorMessage = 'No hash returned from service';
         });
       }
     } catch (e) {
       stopwatch.stop();
       setState(() {
         _statusMessage = 'Error uploading file: $e';
+        errorMessage = e.toString();
       });
     } finally {
+      final fileSize = await _selectedFile!.length();
+
       await _performanceService.logOperation(
-        'Upload',
+        'Upload to $_selectedService',
         _selectedFile!.path.split('/').last,
         stopwatch.elapsedMilliseconds,
         uploadStatus,
+        _selectedService,
+        fileSize,
+        error: errorMessage,
       );
+
       setState(() {
         _isUploading = false;
       });
@@ -107,13 +150,37 @@ class _UploadScreenState extends State<UploadScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Upload to IPFS (Pinata)'),
+        title: Text('Upload to IPFS ($_selectedService)'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(
+                labelText: 'Select Service',
+                border: OutlineInputBorder(),
+              ),
+              value: _selectedService,
+              items: _serviceOptions.map((String service) {
+                return DropdownMenuItem<String>(
+                  value: service,
+                  child: Text(service),
+                );
+              }).toList(),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  setState(() {
+                    _selectedService = newValue;
+
+                    _ipfsHash = '';
+                    _statusMessage = '';
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 16),
             ElevatedButton.icon(
               icon: const Icon(Icons.attach_file),
               label: const Text('Select File'),
@@ -127,14 +194,18 @@ class _UploadScreenState extends State<UploadScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Selected File:', style: Theme.of(context).textTheme.titleMedium),
+                      Text('Selected File:',
+                          style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 4),
                       Text(_selectedFile!.path.split('/').last),
                       FutureBuilder<int>(
                         future: _selectedFile!.length(),
                         builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.done && snapshot.hasData) {
-                            return Text('Size: ${(snapshot.data! / 1024).toStringAsFixed(2)} KB');
+                          if (snapshot.connectionState ==
+                                  ConnectionState.done &&
+                              snapshot.hasData) {
+                            return Text(
+                                'Size: ${(snapshot.data! / 1024).toStringAsFixed(2)} KB');
                           }
                           return const Text('Size: calculating...');
                         },
@@ -147,13 +218,13 @@ class _UploadScreenState extends State<UploadScreen> {
             if (_selectedFile != null)
               ElevatedButton.icon(
                 icon: const Icon(Icons.cloud_upload),
-                label: const Text('Upload to Pinata'),
+                label: Text('Upload to $_selectedService'),
                 onPressed: _isUploading ? null : _uploadFile,
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12)),
               ),
             const SizedBox(height: 20),
-            if (_isUploading)
-              const Center(child: CircularProgressIndicator()),
+            if (_isUploading) const Center(child: CircularProgressIndicator()),
             if (_statusMessage.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10.0),
@@ -161,9 +232,11 @@ class _UploadScreenState extends State<UploadScreen> {
                   _statusMessage,
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: _statusMessage.contains('success') || _statusMessage.contains('successfully')
+                    color: _statusMessage.contains('success') ||
+                            _statusMessage.contains('successfully')
                         ? Colors.green
-                        : _statusMessage.contains('failed') || _statusMessage.contains('Error')
+                        : _statusMessage.contains('failed') ||
+                                _statusMessage.contains('Error')
                             ? Colors.red
                             : Theme.of(context).textTheme.bodyLarge?.color,
                   ),
@@ -177,12 +250,22 @@ class _UploadScreenState extends State<UploadScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('IPFS Hash (CID):', style: Theme.of(context).textTheme.titleMedium),
+                      Text('IPFS Hash (CID):',
+                          style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 4),
                       SelectableText(_ipfsHash),
                       const SizedBox(height: 8),
-                      Text('You can access your file via a public gateway, e.g.:', style: Theme.of(context).textTheme.bodySmall),
-                      SelectableText('https://gateway.pinata.cloud/ipfs/$_ipfsHash', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.blue)),
+                      Text(
+                          'You can access your file via a public gateway, e.g.:',
+                          style: Theme.of(context).textTheme.bodySmall),
+                      SelectableText(
+                          _selectedService == 'Pinata'
+                              ? 'https://gateway.pinata.cloud/ipfs/$_ipfsHash'
+                              : 'https://gateway.filebase.io/ipfs/$_ipfsHash',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.blue)),
                     ],
                   ),
                 ),
@@ -193,4 +276,3 @@ class _UploadScreenState extends State<UploadScreen> {
     );
   }
 }
-

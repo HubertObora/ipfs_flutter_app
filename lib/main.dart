@@ -14,6 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'IPFS App',
       theme: ThemeData(
         primarySwatch: Colors.blue,
@@ -48,6 +49,9 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 30,
+      ),
       body: Center(
         child: _widgetOptions.elementAt(_selectedIndex),
       ),
@@ -71,7 +75,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ],
         currentIndex: _selectedIndex,
-        selectedItemColor: Colors.blue,
+        selectedItemColor: Colors.deepPurple,
         unselectedItemColor: Colors.grey,
         onTap: _onItemTapped,
       ),

@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:ipfs_app/services/ipfs_service.dart';
 import 'package:ipfs_app/services/settings_service.dart';
@@ -20,12 +20,12 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
   late TextEditingController _cidController;
   String? _selectedGateway;
-  List<String> _gatewayOptions = [
-    "Default Public Gateway"
-  ]; // Will be populated
+  List<String> _gatewayOptions = ["Default Public Gateway"];
   String _statusMessage = '';
   bool _isDownloading = false;
   String _downloadPath = '';
+  int _fileSize = 0;
+  double _downloadSpeed = 0;
 
   @override
   void initState() {
@@ -38,19 +38,34 @@ class _DownloadScreenState extends State<DownloadScreen> {
     final defaultGateway = await _settingsService.loadDefaultGateway();
     setState(() {
       _gatewayOptions = [
-        defaultGateway ?? 'https://gateway.pinata.cloud', // Default if null
+        defaultGateway ?? 'https://gateway.pinata.cloud',
         'https://ipfs.io',
         'https://cloudflare-ipfs.com',
-        'https://fleek.co/ipfs/', // Fleek's gateway often has /ipfs/ suffix in base
-        // User can also use the one from settings directly
+        'https://ipfs.filebase.io',
+        'https://fleek.co/ipfs/',
       ];
-      // Remove duplicates and ensure the default from settings is the first selectable option if not already present
       _gatewayOptions = _gatewayOptions.toSet().toList();
       if (defaultGateway != null && !_gatewayOptions.contains(defaultGateway)) {
         _gatewayOptions.insert(0, defaultGateway);
       }
       _selectedGateway = _gatewayOptions.isNotEmpty ? _gatewayOptions[0] : null;
     });
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var i = (log(bytes) / log(1024)).floor();
+    return '${(bytes / pow(1024, i)).toStringAsFixed(2)} ${suffixes[i]}';
+  }
+
+  String _formatSpeed(double kbps) {
+    if (kbps <= 0) return '0 KB/s';
+    if (kbps < 1024) {
+      return '${kbps.toStringAsFixed(2)} KB/s';
+    } else {
+      return '${(kbps / 1024).toStringAsFixed(2)} MB/s';
+    }
   }
 
   Future<void> _downloadFile() async {
@@ -69,17 +84,19 @@ class _DownloadScreenState extends State<DownloadScreen> {
     setState(() {
       _isDownloading = true;
       _statusMessage = 'Downloading...';
-      _downloadPath = 'df';
+      _downloadPath = '';
+      _fileSize = 0;
+      _downloadSpeed = 0;
     });
 
     final stopwatch = Stopwatch()..start();
     String downloadStatus = 'Failure';
     String cid = _cidController.text.trim();
-    // Try to infer a filename from CID or use CID as filename
+    String? errorMessage;
+
     String fileName = cid.length > 20 ? '${cid.substring(0, 20)}...' : cid;
 
     try {
-      // Ensure the selected gateway is a valid URL for download
       String gatewayToUse = _selectedGateway!;
       if (_selectedGateway == "Default Public Gateway") {
         gatewayToUse =
@@ -90,30 +107,54 @@ class _DownloadScreenState extends State<DownloadScreen> {
           await _ipfsService.downloadFromGateway(cid, gatewayToUse, fileName);
       stopwatch.stop();
 
+      final fileSize = _ipfsService.lastDownloadedFileSize;
+
       if (success) {
         final directory = await getApplicationDocumentsDirectory();
+
+        final durationSeconds = stopwatch.elapsedMilliseconds / 1000;
+        final speedKBps = (fileSize / 1024) / durationSeconds;
+
         setState(() {
           _statusMessage = 'File downloaded successfully!';
           _downloadPath = '${directory.path}/$fileName';
+          _fileSize = fileSize;
+          _downloadSpeed = speedKBps;
           downloadStatus = 'Success';
         });
       } else {
         setState(() {
           _statusMessage = 'Download failed. Check console for details.';
+          errorMessage = 'Gateway returned error';
         });
       }
     } catch (e) {
       stopwatch.stop();
       setState(() {
         _statusMessage = 'Error downloading file: $e';
+        errorMessage = e.toString();
       });
     } finally {
+      String serviceName = "Gateway";
+      if (_selectedGateway!.contains('pinata')) {
+        serviceName = 'Pinata Gateway';
+      } else if (_selectedGateway!.contains('filebase')) {
+        serviceName = 'Filebase Gateway';
+      } else if (_selectedGateway!.contains('ipfs.io')) {
+        serviceName = 'IPFS.io Gateway';
+      }
+
       await _performanceService.logOperation(
         'Download',
         cid,
         stopwatch.elapsedMilliseconds,
         downloadStatus,
+        serviceName,
+        _fileSize,
+        gateway: _selectedGateway,
+        error: errorMessage,
       );
+
       setState(() {
         _isDownloading = false;
       });
@@ -148,7 +189,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
                   if (value == null || value.isEmpty) {
                     return 'Please enter an IPFS CID';
                   }
-                  // Basic CID validation (starts with Qm or bafy)
+
                   if (!value.startsWith('Qm') && !value.startsWith('bafy')) {
                     return 'Invalid IPFS CID format';
                   }
@@ -218,10 +259,43 @@ class _DownloadScreenState extends State<DownloadScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Download Location:',
+                        Text('Download Information:',
                             style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 4),
-                        SelectableText(_downloadPath),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.folder, size: 16),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: SelectableText(_downloadPath,
+                                  style:
+                                      Theme.of(context).textTheme.bodyMedium),
+                            ),
+                          ],
+                        ),
+                        if (_fileSize > 0) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(Icons.file_copy, size: 16),
+                              const SizedBox(width: 4),
+                              Text('File Size: ${_formatFileSize(_fileSize)}',
+                                  style:
+                                      Theme.of(context).textTheme.bodyMedium),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(Icons.speed, size: 16),
+                              const SizedBox(width: 4),
+                              Text(
+                                  'Download Speed: ${_formatSpeed(_downloadSpeed)}',
+                                  style:
+                                      Theme.of(context).textTheme.bodyMedium),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
                   ),

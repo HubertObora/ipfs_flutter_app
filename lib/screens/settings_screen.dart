@@ -14,6 +14,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   late TextEditingController _pinataApiKeyController;
   late TextEditingController _pinataSecretApiKeyController;
+  late TextEditingController _filebaseApiKeyController;
+  late TextEditingController _filebaseSecretApiKeyController;
+  late TextEditingController _filebaseIpfsEndpointController;
   late TextEditingController _defaultGatewayUrlController;
 
   String _statusMessage = '';
@@ -23,19 +26,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _pinataApiKeyController = TextEditingController();
     _pinataSecretApiKeyController = TextEditingController();
+    _filebaseApiKeyController = TextEditingController();
+    _filebaseSecretApiKeyController = TextEditingController();
+    _filebaseIpfsEndpointController = TextEditingController();
     _defaultGatewayUrlController = TextEditingController();
     _loadSettings();
   }
 
   Future<void> _loadSettings() async {
     final pinataKeys = await _settingsService.loadPinataKeys();
+    final filebaseKeys = await _settingsService.loadFilebaseKeys();
     final defaultGateway = await _settingsService.loadDefaultGateway();
 
     setState(() {
       _pinataApiKeyController.text = pinataKeys['apiKey'] ?? '';
       _pinataSecretApiKeyController.text = pinataKeys['apiSecret'] ?? '';
+      _filebaseApiKeyController.text = filebaseKeys['apiKey'] ?? '';
+      _filebaseSecretApiKeyController.text = filebaseKeys['apiSecret'] ?? '';
+      _filebaseIpfsEndpointController.text =
+          filebaseKeys['ipfsEndpoint'] ?? 'https://api.filebase.io/v1/ipfs';
       _defaultGatewayUrlController.text =
-          defaultGateway ?? 'https://gateway.pinata.cloud'; // Default if null
+          defaultGateway ?? 'https://gateway.pinata.cloud';
     });
   }
 
@@ -45,11 +56,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _pinataApiKeyController.text,
         _pinataSecretApiKeyController.text,
       );
+      await _settingsService.saveFilebaseKeys(
+        _filebaseApiKeyController.text,
+        _filebaseSecretApiKeyController.text,
+        _filebaseIpfsEndpointController.text,
+      );
       await _settingsService
           .saveDefaultGateway(_defaultGatewayUrlController.text);
       setState(() {
         _statusMessage = 'Settings saved successfully!';
       });
+      // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Settings saved!')),
       );
@@ -64,6 +81,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _pinataApiKeyController.dispose();
     _pinataSecretApiKeyController.dispose();
+    _filebaseApiKeyController.dispose();
+    _filebaseSecretApiKeyController.dispose();
+    _filebaseIpfsEndpointController.dispose();
     _defaultGatewayUrlController.dispose();
     super.dispose();
   }
@@ -91,9 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 obscureText: true,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter Pinata API Key';
-                  }
                   return null;
                 },
               ),
@@ -106,8 +123,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 obscureText: true,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter Pinata Secret API Key';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 24),
+              Text('Filebase Configuration',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _filebaseApiKeyController,
+                decoration: const InputDecoration(
+                  labelText: 'Filebase API Key',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true,
+                validator: (value) {
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _filebaseSecretApiKeyController,
+                decoration: const InputDecoration(
+                  labelText: 'Filebase Secret API Key',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true,
+                validator: (value) {
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _filebaseIpfsEndpointController,
+                decoration: const InputDecoration(
+                  labelText: 'Filebase IPFS Endpoint',
+                  hintText: 'e.g., https://api.filebase.io/v1/ipfs',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value != null && value.isNotEmpty) {
+                    if (!Uri.tryParse(value)!.isAbsolute) {
+                      return 'Please enter a valid URL';
+                    }
                   }
                   return null;
                 },
@@ -120,14 +178,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 controller: _defaultGatewayUrlController,
                 decoration: const InputDecoration(
                   labelText: 'Default Public Gateway URL',
-                  hintText: 'e.g., https://ipfs.io or https://fleek.co',
+                  hintText:
+                      'e.g., https://ipfs.io or https://gateway.filebase.io',
                   border: OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter a gateway URL';
                   }
-                  if (!Uri.tryParse(value)!.isAbsolute ?? true) {
+                  if (!Uri.tryParse(value)!.isAbsolute) {
                     return 'Please enter a valid URL';
                   }
                   return null;
