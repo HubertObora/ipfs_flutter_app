@@ -57,12 +57,8 @@ class IpfsService {
 
       request.files.add(await http.MultipartFile.fromPath('file', file.path));
 
-      print('Wysyłanie do Filebase IPFS: $url');
       final response = await request.send();
       final responseBody = await response.stream.bytesToString();
-
-      print('Filebase IPFS status code: ${response.statusCode}');
-      print('Filebase IPFS response body: $responseBody');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final decodedResponse = jsonDecode(responseBody);
@@ -76,7 +72,6 @@ class IpfsService {
         print('Response: $responseBody');
 
         if (response.statusCode == 401 || response.statusCode == 403) {
-          print('Próba alternatywnego API endpoint...');
           return await _uploadToFilebaseIPFSAlternative(
               file, ipfsApiToken, ipfsEndpoint);
         }
